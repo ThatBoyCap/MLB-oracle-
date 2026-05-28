@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MLB Oracle</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #f5f5f0; color: #111; font-family: -apple-system, sans-serif; padding: 16px 16px 80px; }
+h1 { font-size: 32px; font-weight: 800; color: #111; margin-bottom: 4px; }
+.sub { font-size: 12px; color: #888; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 16px; }
+.card { background: white; border: 1px solid #ddd; border-radius: 10px; padding: 16px; margin-bottom: 10px; cursor: pointer; }
+.card-title { font-size: 17px; font-weight: 700; }
+.card-sub { font-size: 12px; color: #777; margin-top: 2px; }
+.card-body { font-size: 13px; color: #444; margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; display: none; line-height: 1.6; }
+.badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 20px; margin-top: 4px; }
+.high { background: #dcfce7; color: #16a34a; }
+.medium { background: #fef9c3; color: #ca8a04; }
+.low { background: #fee2e2; color: #dc2626; }
+.section { background: white; border: 1px solid #ddd; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.label { font-size: 12px; font-weight: 700; color: #555; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px; }
+input[type=password], input[type=date] {
+  width: 100%; border: 1.5px solid #ddd; border-radius: 8px;
+  padding: 12px 14px; font-size: 15px; font-family: -apple-system, sans-serif;
+  background: #fafafa; color: #111; outline: none; margin-bottom: 8px;
+}
+input:focus { border-color: #111; }
+.hint { font-size: 12px; color: #999; line-height: 1.5; }
+.hint a { color: #555; }
+.btn {
+  width: 100%; background: #111; color: white; border: none;
+  border-radius: 8px; padding: 14px; font-size: 16px; font-weight: 700;
+  font-family: -apple-system, sans-serif; cursor: pointer; margin-top: 4px;
+}
+.btn:disabled { background: #999; cursor: not-allowed; }
+.tabs { display: flex; border-bottom: 2px solid #eee; margin-bottom: 16px; }
+.tab { flex: 1; text-align: center; padding: 10px; font-weight: 700; font-size: 14px; color: #999; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+.tab.active { color: #111; border-bottom-color: #111; }
+.error { background: #fee2e2; border: 1px solid #fca5a5; border-radius: 8px; padding: 14px; color: #dc2626; font-size: 13px; margin-top: 12px; line-height: 1.5; word-break: break-all; }
+.loading { text-align: center; padding: 32px; color: #777; font-size: 15px; }
+.game-row { display: flex; align-items: center; justify-content: space-between; }
+.team { flex: 1; }
+.team.winner { font-weight: 800; }
+.team.loser { color: #aaa; }
+.vs { color: #ccc; font-size: 12px; padding: 0 8px; }
+.pick-label { font-size: 10px; font-weight: 700; color: #16a34a; text-transform: uppercase; letter-spacing: 1px; }
+.disclaimer { font-size: 11px; color: #bbb; text-align: center; margin-top: 20px; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<h1>⚾ MLB Oracle</h1>
+<div class="sub">AI-Powered Daily Analysis</div>
+
+<div class="section">
+  <div class="label">🔑 Anthropic API Key</div>
+  <input type="password" id="apiKey" placeholder="sk-ant-..." />
+  <div class="hint">Get a free key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a> → API Keys → Create Key</div>
+</div>
+
+<div class="section">
+  <div class="label">📅 Date</div>
+  <input type="date" id="datePicker" />
+  <button class="btn" id="runBtn" onclick="runAnalysis()">Run Analysis</button>
+</div>
+
+<div id="errorBox" class="error" style="display:none"></div>
+<div id="loadingBox" class="loading" style="display:none">Analyzing... this may take 15-20 seconds</div>
+
+<div id="resultsArea" style="display:none">
+  <div class="tabs">
+    <div class="tab active" id="tab-hr" onclick="switchTab('hr')">⚡ HR Candidates</div>
+    <div class="tab" id="tab-games" onclick="switchTab('games')">🏆 Game Winners</div>
+  </div>
+  <div id="hrSection"></div>
+  <div id="gamesSection" style="display:none"></div>
+  <div class="disclaimer">⚠ AI-generated for entertainment only. Always do your own research.</div>
+</div>
+
+<script>
+// Default to tomorrow
+const d = new Date();
+d.setDate(d.getDate() + 1);
+document.getElementById('datePicker').value = d.toISOString().split('T')[0];
+
+let activeTab = 'hr';
+
+function switchTab(tab) {
+  activeTab = tab;
+  document.getElementById('tab-hr').classList.toggle('active', tab === 'hr');
+  document.getElementById('tab-games').classList.toggle('active', tab === 'games');
+  document.getElementById('hrSection').style.display = tab === 'hr' ? 'block' : 'none';
+  document.getElementById('gamesSection').style.display = tab === 'games' ? 'block' : 'none';
+}
+
+function toggleCard(el) {
+  const body = el.querySelector('.card-body');
+  body.style.display = body.style.display === 'block' ? 'none' : 'block';
+}
+
+async function callClaude(apiKey, prompt) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: prompt }]
+    })
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error('API error ' + res.status + ': ' + t.slice(0, 200));
+  }
+  const data = await res.json();
+  const block = data.content?.find(b => b.type === 'text');
+  if (!block?.text) throw new Error('No text in response');
+  const raw = block.text.trim().replace(/^```[a-z]*\n?/gi,'').replace(/```\s*$/g,'').trim();
+  const s = raw.indexOf('{'), e = raw.lastIndexOf('}');
+  if (s === -1) throw new Error('No JSON found: ' + raw.slice(0,150));
+  return JSON.parse(raw.slice(s, e+1));
+}
+
+async function runAnalysis() {
+  const apiKey = document.getElementById('apiKey').value.trim();
+  if (!apiKey.startsWith('sk-ant-')) { showError('Please enter a valid API key starting with sk-ant-'); return; }
+  const dateVal = document.getElementById('datePicker').value;
+  if (!dateVal) { showError('Please pick a date'); return; }
+
+  const fmt = new Date(dateVal + 'T12:00:00').toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+
+  document.getElementById('errorBox').style.display = 'none';
+  document.getElementById('resultsArea').style.display = 'none';
+  document.getElementById('loadingBox').style.display = 'block';
+  document.getElementById('runBtn').disabled = true;
+
+  try {
+    const hrData = await callClaude(apiKey,
+      `MLB analytics expert. For ${fmt}, give top 6 players most likely to hit a home run. Base on recent power trends, pitcher matchups, ballpark factors, barrel rate, exit velocity.\n\nReturn ONLY raw JSON:\n{"note":"slate note","players":[{"name":"Full Name","team":"NYY","position":"OF","opponent":"vs J.Smith (BOS)","confidence":"High","summary":"reason with stats"}]}\n\nHigh/Medium/Low confidence, 6 players, High first.`
+    );
+
+    const gamesData = await callClaude(apiKey,
+      `MLB analyst. For ${fmt}, predict winners of MLB games. Use starter quality, bullpen, team form, home field, injuries.\n\nReturn ONLY raw JSON:\n{"note":"slate note","games":[{"home":"NYY","away":"BOS","homePitcher":"Name","awayPitcher":"Name","pick":"home","pickTeam":"Yankees","confidence":"High","summary":"reason"}]}\n\nInclude 6-8 games, High/Medium/Low confidence.`
+    );
+
+    // Render HR
+    const hrSection = document.getElementById('hrSection');
+    hrSection.innerHTML = hrData.note ? `<p style="font-size:13px;color:#777;margin-bottom:12px">${hrData.note}</p>` : '';
+    (hrData.players||[]).forEach(p => {
+      const conf = p.confidence||'Medium';
+      const cls = conf==='High'?'high':conf==='Medium'?'medium':'low';
+      const div = document.createElement('div');
+      div.className = 'card';
+      div.onclick = () => toggleCard(div);
+      div.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <div class="card-title">${p.name}</div>
+            <div class="card-sub">${p.team} · ${p.position} · ${p.opponent}</div>
+          </div>
+          <span class="badge ${cls}">${conf}</span>
+        </div>
+        <div class="card-body">${p.summary}</div>`;
+      hrSection.appendChild(div);
+    });
+
+    // Render Games
+    const gamesSection = document.getElementById('gamesSection');
+    gamesSection.innerHTML = gamesData.note ? `<p style="font-size:13px;color:#777;margin-bottom:12px">${gamesData.note}</p>` : '';
+    (gamesData.games||[]).forEach(g => {
+      const conf = g.confidence||'Medium';
+      const cls = conf==='High'?'high':conf==='Medium'?'medium':'low';
+      const homeWin = g.pick==='home';
+      const div = document.createElement('div');
+      div.className = 'card';
+      div.onclick = () => toggleCard(div);
+      div.innerHTML = `
+        <div class="game-row">
+          <div class="team ${homeWin?'winner':'loser'}">
+            <div class="card-title">${g.home}</div>
+            <div class="card-sub">${g.homePitcher}</div>
+            ${homeWin?'<div class="pick-label">✓ Pick</div>':''}
+          </div>
+          <div class="vs">VS</div>
+          <div class="team ${!homeWin?'winner':'loser'}" style="text-align:right">
+            <div class="card-title">${g.away}</div>
+            <div class="card-sub">${g.awayPitcher}</div>
+            ${!homeWin?'<div class="pick-label">✓ Pick</div>':''}
+          </div>
+        </div>
+        <div style="margin-top:8px"><span class="badge ${cls}">${conf} — ${g.pickTeam}</span></div>
+        <div class="card-body">${g.summary}</div>`;
+      gamesSection.appendChild(div);
+    });
+
+    document.getElementById('loadingBox').style.display = 'none';
+    document.getElementById('resultsArea').style.display = 'block';
+    switchTab('hr');
+
+  } catch(err) {
+    document.getElementById('loadingBox').style.display = 'none';
+    showError(err.message);
+  } finally {
+    document.getElementById('runBtn').disabled = false;
+  }
+}
+
+function showError(msg) {
+  const b = document.getElementById('errorBox');
+  b.textContent = msg;
+  b.style.display = 'block';
+}
+</script>
+</body>
+</html>
